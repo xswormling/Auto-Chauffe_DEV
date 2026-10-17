@@ -7,7 +7,7 @@
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
     <meta name="theme-color" content="#ff6b6b" />
-    <title>Auto‑Chauffe — Version Rigolote v14</title>
+    <title>Auto‑Chauffe — Version Rigolote v15a</title>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@300;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.9/build/opensheetmusicdisplay.min.js"></script>
     <style>
@@ -95,7 +95,7 @@
 
   <body>
     <header>
-      <h1>🎉 Auto‑Chauffe Rigolote — v14</h1>
+      <h1>🎉 Auto‑Chauffe Rigolote — v15a</h1>
       <div style="font-size:13px; color:#5a5a5a; margin-top:6px">Amusons‑nous avec les jeunes cornistes — affichage adapté pour cor en Fa (sonne une quinte en dessous)</div>
     </header>
 
@@ -180,7 +180,11 @@
         const fingeringMap = {
           C: 0, 'C#': 1, D: 2, 'D#': 3, E: 0, F: 0, 'F#': 1, G: 2, 'G#': 3, A: 0, 'A#': 1, B: 2
         };
-        return fingeringMap[normalized] ?? 0;
+        let v = fingeringMap[normalized];
+        if (typeof v !== 'number' || !isFinite(v)) v = 0;
+        // clamp to 0..3 to ensure valid finger numbers (0,1,2,3)
+        v = Math.max(0, Math.min(3, v));
+        return v;
       }
 
       function addHornFingerings(xmlString) {
@@ -215,9 +219,14 @@
             notations.appendChild(technical);
           }
 
+          // remove existing fingering elements (to avoid duplicates)
           technical.querySelectorAll('fingering').forEach((f) => f.remove());
+
+          // Create <fingering><finger>n</finger></fingering> as per MusicXML expectations
           const fingeringNode = xmlDoc.createElement('fingering');
-          fingeringNode.textContent = String(fingeringValue);
+          const fingerChild = xmlDoc.createElement('finger');
+          fingerChild.textContent = String(fingeringValue);
+          fingeringNode.appendChild(fingerChild);
           technical.appendChild(fingeringNode);
         });
 
@@ -278,7 +287,7 @@
 
             const xmlWithFingerings = addHornFingerings(xmlContent);
             osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings);
-            log('Partition affichée : ' + f.name + ' (doigtés cor en Fa ajoutés)');
+            log('Partition affichée : ' + f.name + ' (doigtés cor en Fa ajoutés, format 0..3)');
             transposeBtn.disabled = !xmlContent || firstNoteMidi === null || !Number.isFinite(lastDetectedWrittenMidi);
           } catch (err) {
             log('Erreur lecture XML: ' + err);
@@ -509,9 +518,9 @@
         const xmlT = new XMLSerializer().serializeToString(xmlDoc);
         const xmlWithFingerings = addHornFingerings(xmlT);
         osmdTransposed = await renderScore('osmdTransposed', xmlWithFingerings);
-        resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span> <span class="result-badge" style="background:#fff8e7; color:#7a4d00; margin-left:6px;">🎺 Doigtés cor en Fa ajoutés sur les deux parties</span>';
+        resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span> <span class="result-badge" style="background:#fff8e7; color:#7a4d00; margin-left:6px;">🎺 Doigtés cor en Fa ajoutés sur les deux parties (format 0..3)</span>';
         showerConfetti();
-        log('Transposition effectuée (V14) — intervalle : ' + interval + ' demi-tons (pour cor en Fa)');
+        log('Transposition effectuée (V15a) — intervalle : ' + interval + ' demi-tons (pour cor en Fa)');
       };
     </script>
   </body>
