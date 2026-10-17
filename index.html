@@ -174,6 +174,56 @@
         return note.step + (note.alter ? '#' : '') + note.octave;
       }
 
+      function hornFingeringForMidi(midi) {
+        const note = noteFromMidi(midi);
+        const normalized = note.step + (note.alter ? '#' : '');
+        const fingeringMap = {
+          C: 0, 'C#': 1, D: 2, 'D#': 3, E: 0, F: 0, 'F#': 1, G: 2, 'G#': 3, A: 0, 'A#': 1, B: 2
+        };
+        return fingeringMap[normalized] ?? 0;
+      }
+
+      function addHornFingerings(xmlString) {
+        if (!xmlString) return xmlString;
+        const xmlDoc = new DOMParser().parseFromString(xmlString, 'application/xml');
+        const notes = xmlDoc.querySelectorAll('note');
+
+        notes.forEach((note) => {
+          const pitch = note.querySelector('pitch');
+          if (!pitch) return;
+
+          const stepNode = pitch.querySelector('step');
+          const alterNode = pitch.querySelector('alter');
+          const octaveNode = pitch.querySelector('octave');
+          if (!stepNode || !octaveNode) return;
+
+          const step = stepNode.textContent.trim();
+          const alter = alterNode ? parseInt(alterNode.textContent, 10) : 0;
+          const octave = parseInt(octaveNode.textContent, 10);
+          const midi = midiFromNote(step, alter, octave);
+          const fingeringValue = hornFingeringForMidi(midi);
+
+          let notations = note.querySelector('notations');
+          if (!notations) {
+            notations = xmlDoc.createElement('notations');
+            note.appendChild(notations);
+          }
+
+          let technical = notations.querySelector('technical');
+          if (!technical) {
+            technical = xmlDoc.createElement('technical');
+            notations.appendChild(technical);
+          }
+
+          technical.querySelectorAll('fingering').forEach((f) => f.remove());
+          const fingeringNode = xmlDoc.createElement('fingering');
+          fingeringNode.textContent = String(fingeringValue);
+          technical.appendChild(fingeringNode);
+        });
+
+        return new XMLSerializer().serializeToString(xmlDoc);
+      }
+
       async function renderScore(id, xml) {
         const container = document.getElementById(id);
         if (!container) return null;
@@ -226,8 +276,9 @@
               log('Aucune note avec pitch trouvée dans la partition.');
             }
 
-            osmdOriginal = await renderScore('osmdOriginal', xmlContent);
-            log('Partition affichée : ' + f.name);
+            const xmlWithFingerings = addHornFingerings(xmlContent);
+            osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings);
+            log('Partition affichée : ' + f.name + ' (doigtés cor en Fa ajoutés)');
             transposeBtn.disabled = !xmlContent || firstNoteMidi === null || !Number.isFinite(lastDetectedWrittenMidi);
           } catch (err) {
             log('Erreur lecture XML: ' + err);
@@ -237,7 +288,7 @@
         r.readAsText(f);
       };
 
-      window.addEventListener('resize', async () => { if (xmlContent) osmdOriginal = await renderScore('osmdOriginal', xmlContent); });
+      window.addEventListener('resize', async () => { if (xmlContent) { const xmlWithFingerings = addHornFingerings(xmlContent); osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings); } });
 
       let audioContext, analyser, mediaStream, audioInterval;
 
@@ -456,8 +507,9 @@
         });
 
         const xmlT = new XMLSerializer().serializeToString(xmlDoc);
-        osmdTransposed = await renderScore('osmdTransposed', xmlT);
-        resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span>';
+        const xmlWithFingerings = addHornFingerings(xmlT);
+        osmdTransposed = await renderScore('osmdTransposed', xmlWithFingerings);
+        resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span> <span class="result-badge" style="background:#fff8e7; color:#7a4d00; margin-left:6px;">🎺 Doigtés cor en Fa ajoutés sur les deux parties</span>';
         showerConfetti();
         log('Transposition effectuée (V14) — intervalle : ' + interval + ' demi-tons (pour cor en Fa)');
       };
