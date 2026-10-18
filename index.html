@@ -80,6 +80,17 @@
 
       .result-badge { padding:10px; border-radius:12px; display:inline-block; font-weight:700; }
 
+      /* Fingering overlay style */
+      svg .fingering-text {
+        font-size:12px;
+        fill: var(--accent);
+        font-weight:800;
+        pointer-events: none;
+        paint-order: stroke;
+        stroke: white;
+        stroke-width: 0.6px;
+      }
+
       .confetti { pointer-events:none; position:fixed; left:0; top:0; width:100%; height:0; overflow:visible; z-index:9999; }
       .confetti span {
         position:absolute; font-size:28px; animation:fall 2s linear forwards; transform-origin:center; opacity:0.95;
@@ -131,7 +142,10 @@
       </section>
 
       <section class="section">
-        <button id="transposeBtn" class="btn" disabled>🎼 Transposer les notes (Magie)</button>
+        <div style="display:flex; gap:12px;">
+          <div style="flex:1"><button id="transposeBtn" class="btn" disabled>🎼 Transposer les notes (Magie)</button></div>
+          <div style="flex:1"><button id="showFingeringBtn" class="btn secondary" disabled>🎯 Afficher les doigtés</button></div>
+        </div>
         <div id="resultInfo" style="margin-top:10px"></div>
         <div id="osmdTransposed" style="margin-top:12px"></div>
       </section>
@@ -155,6 +169,9 @@
       // lastDetected holds the last successfully-detected sounding pitch; we'll derive written pitch for display & transpose
       let lastDetectedSoundingMidi = null, lastDetectedWrittenMidi = null, lastDetectedDisplay = null;
       let playedNote = null, playedMidi = null, interval = 0;
+
+      // xmlWithFingerings: store modified XML with added fingering nodes for overlay and rendering
+      let xmlWithFingerings = null;
 
       function mod(n, m) { return ((n % m) + m) % m; }
 
@@ -279,6 +296,7 @@
       const xmlInput = document.getElementById('xmlInput');
       const fileInfo = document.getElementById('fileInfo');
       const transposeBtn = document.getElementById('transposeBtn');
+      const showFingeringBtn = document.getElementById('showFingeringBtn');
 
       xmlInput.onchange = () => {
         const f = xmlInput.files[0];
@@ -307,19 +325,26 @@
               log('Aucune note avec pitch trouvée dans la partition.');
             }
 
-            const xmlWithFingerings = addHornFingerings(xmlContent);
+            xmlWithFingerings = addHornFingerings(xmlContent);
             osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings);
             log('Partition affichée : ' + f.name + ' (doigtés cor en Fa ajoutés, combos possibles)');
+
+            // enable buttons
+            showFingeringBtn.disabled = false;
             transposeBtn.disabled = !xmlContent || firstNoteMidi === null || !Number.isFinite(lastDetectedWrittenMidi);
+
+            // overlay fingerings on the original rendering
+            overlayFingeringsOnContainer('osmdOriginal', xmlWithFingerings);
           } catch (err) {
             log('Erreur lecture XML: ' + err);
             transposeBtn.disabled = true;
+            showFingeringBtn.disabled = true;
           }
         };
         r.readAsText(f);
       };
 
-      window.addEventListener('resize', async () => { if (xmlContent) { const xmlWithFingerings = addHornFingerings(xmlContent); osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings); } });
+      window.addEventListener('resize', async () => { if (xmlContent) { xmlWithFingerings = addHornFingerings(xmlContent); osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings); overlayFingeringsOnContainer('osmdOriginal', xmlWithFingerings); } });
 
       let audioContext, analyser, mediaStream, audioInterval;
 
@@ -490,6 +515,63 @@
         }
       }
 
+      // --- Fingering overlay utilities ---
+      function clearFingeringsFromSvg(container) {
+        if (!container) return;
+        const svg = container.querySelector('svg');
+        if (!svg) return;
+        svg.querySelectorAll('.fingering-text').forEach(e => e.remove());
+      }
+
+      function overlayFingeringsOnContainer(containerId, xmlText) {
+        if (!xmlText) { log('Aucun XML pour afficher les doigtés.'); return; }
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const svg = container.querySelector('svg');
+        if (!svg) { log('SVG non trouvé dans ' + containerId + ' — rends d\'abord la partition.'); return; }
+
+        clearFingeringsFromSvg(container);
+
+        const xmlDoc = new DOMParser().parseFromString(xmlText, 'application/xml');
+        const fingNodes = Array.from(xmlDoc.querySelectorAll('fingering, technical > fingering'));
+        if (fingNodes.length === 0) { log('Aucun doigté (fingering) trouvé dans la partition.'); return; }
+
+        // heuristique : map fingNodes in order to note glyphs in SVG
+        let noteEls = Array.from(svg.querySelectorAll('g.note, g.Note, .note, .notehead, .noteheadnormal, .notehead-small'));
+        if (noteEls.length === 0) noteEls = Array.from(svg.querySelectorAll('g')).filter(g => g.querySelector('.notehead, .note'));
+        if (noteEls.length === 0) { log('Impossible de localiser les éléments de note dans le SVG pour placer les doigtés.'); return; }
+
+        let noteIndex = 0;
+        fingNodes.forEach((fNode) => {
+          while (noteIndex < noteEls.length && !noteEls[noteIndex].getBBox) noteIndex++;
+          const noteEl = noteEls[noteIndex];
+          if (!noteEl) return;
+          try {
+            const bbox = noteEl.getBBox();
+            const x = bbox.x + bbox.width + 4;
+            const y = bbox.y + bbox.height / 2 + 4;
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', String(x));
+            text.setAttribute('y', String(y));
+            text.setAttribute('class', 'fingering-text');
+            text.setAttribute('dominant-baseline', 'middle');
+            text.setAttribute('text-anchor', 'start');
+            text.textContent = fNode.textContent.trim();
+            svg.appendChild(text);
+          } catch (err) {
+            console.warn('Erreur placement doigté', err);
+          }
+          noteIndex++;
+        });
+
+        log('Doigtés affichés (' + fingNodes.length + ') sur ' + containerId + '.');
+      }
+
+      showFingeringBtn.onclick = () => {
+        if (xmlWithFingerings) overlayFingeringsOnContainer('osmdOriginal', xmlWithFingerings);
+        if (osmdTransposed && xmlWithFingerings) overlayFingeringsOnContainer('osmdTransposed', xmlWithFingerings);
+      };
+
       transposeBtn.onclick = async () => {
         if (!xmlContent) { log('Aucune partition chargée.'); return; }
         if (firstNoteMidi === null) { log('Impossible : aucune note de départ détectée.'); return; }
@@ -538,11 +620,14 @@
         });
 
         const xmlT = new XMLSerializer().serializeToString(xmlDoc);
-        const xmlWithFingerings = addHornFingerings(xmlT);
+        xmlWithFingerings = addHornFingerings(xmlT);
         osmdTransposed = await renderScore('osmdTransposed', xmlWithFingerings);
-        resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span> <span class="result-badge" style="background:#fff8e7; color:#7a4d00; margin-left:6px;">🎺 Doigtés cor en Fa ajoutés sur les deux parties (combinaisons)</span>';
+        resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span>';
         showerConfetti();
         log('Transposition effectuée (V15b) — intervalle : ' + interval + ' demi-tons (pour cor en Fa)');
+
+        // overlay fingerings on transposed rendering
+        overlayFingeringsOnContainer('osmdTransposed', xmlWithFingerings);
       };
     </script>
   </body>
