@@ -7,7 +7,7 @@
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
     <meta name="theme-color" content="#ff6b6b" />
-    <title>Auto‑Chauffe — Version Rigolote v16c</title>
+    <title>Auto‑Chauffe — Version Rigolote v16d</title>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@300;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.9/build/opensheetmusicdisplay.min.js"></script>
     <style>
@@ -106,7 +106,7 @@
 
   <body>
     <header>
-      <h1>🎉 Auto‑Chauffe Rigolote — v16c</h1>
+      <h1>🎉 Auto‑Chauffe Rigolote — v16d</h1>
       <div style="font-size:13px; color:#5a5a5a; margin-top:6px">Amusons‑nous avec les jeunes cornistes — affichage adapté pour cor en Fa (sonne une quinte en dessous)</div>
     </header>
 
@@ -331,7 +331,7 @@
 
             xmlWithFingerings = addHornFingerings(xmlContent);
             osmdOriginal = await renderScore('osmdOriginal', xmlWithFingerings);
-            log('Partition affichée : ' + f.name + ' (doigtés cor en Fa ajoutés, combos possibles) (v16c)');
+            log('Partition affichée : ' + f.name + ' (doigtés cor en Fa ajoutés, combos possibles) (v16d)');
 
             // enable buttons
             showFingeringBtn.disabled = false;
@@ -554,51 +554,84 @@
         });
       }
 
+      // Robust overlayFingeringsOnContainer — tolerant to namespaces and varied SVG output from OSMD
       async function overlayFingeringsOnContainer(containerId, xmlText) {
         if (!xmlText) { log('Aucun XML pour afficher les doigtés.'); return; }
         const container = document.getElementById(containerId);
         if (!container) return;
-        const svg = await waitForSvg(container, 3000);
+
+        // local wait with slightly longer timeout to cope with slow rendering
+        const waitForSvgLocal = (container, timeout = 4000) => new Promise((res) => {
+          const start = Date.now();
+          (function check() {
+            const svg = container.querySelector('svg');
+            if (svg && svg.getBBox) {
+              try {
+                const b = svg.getBBox();
+                if ((b.width && b.width > 0) || svg.querySelector('*')) return res(svg);
+              } catch (e) {
+                return res(svg);
+              }
+            }
+            if (Date.now() - start > timeout) return res(container.querySelector('svg'));
+            setTimeout(check, 120);
+          })();
+        });
+
+        const svg = await waitForSvgLocal(container, 4000);
         if (!svg) { log('SVG non trouvé dans ' + containerId + ' — rends d\'abord la partition.'); return; }
 
-        clearFingeringsFromSvg(container);
+        // clear previous overlays
+        svg.querySelectorAll('.fingering-text').forEach(e => e.remove());
 
-        const xmlDoc = new DOMParser().parseFromString(xmlText, 'application/xml');
-        const fingNodes = Array.from(xmlDoc.querySelectorAll('fingering, technical > fingering'));
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
+
+        // find fingering nodes namespace-insensitively
+        let fingNodes = Array.from(xmlDoc.getElementsByTagName('fingering') || []);
+        if (!fingNodes.length) fingNodes = Array.from(xmlDoc.getElementsByTagNameNS('*', 'fingering') || []);
+        if (!fingNodes.length) fingNodes = Array.from(xmlDoc.querySelectorAll('technical fingering, technical > fingering'));
         if (fingNodes.length === 0) { log('Aucun doigté (fingering) trouvé dans la partition.'); return; }
 
-        // find candidate note elements in SVG (try several selectors)
-        let noteEls = Array.from(svg.querySelectorAll('g.note, g.Note, .note, .notehead, .noteheadnormal, .notehead-small, path.notehead, ellipse.notehead'));
+        // broaden SVG note element selection to match multiple OSMD versions
+        let noteEls = Array.from(svg.querySelectorAll(
+          'g[class*="note"], g[class*="Note"], [class*="notehead"], .notehead, .noteheadnormal, .notehead-small, path[class*="notehead"], ellipse[class*="notehead"], circle[class*="notehead"]'
+        ));
+
         if (noteEls.length === 0) {
-          // fallback: find groups that contain a path resembling a notehead
           noteEls = Array.from(svg.querySelectorAll('g')).filter(g => g.querySelector('path') || g.querySelector('ellipse') || g.querySelector('circle'));
         }
+
         if (noteEls.length === 0) { log('Impossible de localiser les éléments de note dans le SVG pour placer les doigtés.'); return; }
 
-        // place fingering texts sequentially near note elements
+        const getTextFromFnode = (fNode) => {
+          const fingers = Array.from(fNode.getElementsByTagName('finger') || []);
+          if (fingers.length) return fingers.map(f => f.textContent.trim()).filter(Boolean).join('/');
+          return (fNode.textContent || '').trim();
+        };
+
+        // place fingerings near note elements (one-to-one sequential mapping)
         let noteIndex = 0;
-        for (let i = 0; i < fingNodes.length; i++) {
-          // advance to a valid note element
-          while (noteIndex < noteEls.length && typeof noteEls[noteIndex].getBBox !== 'function') noteIndex++;
+        for (let i = 0; i < fingNodes.length && noteIndex < noteEls.length; i++, noteIndex++) {
           const noteEl = noteEls[noteIndex];
-          if (!noteEl) break;
+          if (!noteEl) continue;
           try {
             const bbox = noteEl.getBBox();
-            // compute position: to the right and slightly above the center
-            const x = bbox.x + bbox.width + 6;
-            const y = bbox.y + bbox.height / 2 - 2;
+            let x = bbox.x + bbox.width + 6;
+            let y = bbox.y + bbox.height / 2 - 2;
             const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             text.setAttribute('x', String(x));
             text.setAttribute('y', String(y));
             text.setAttribute('class', 'fingering-text');
             text.setAttribute('dominant-baseline', 'central');
             text.setAttribute('text-anchor', 'start');
-            text.textContent = getFingeringTextFromNode(fingNodes[i]) || '';
+            // inline style fallback so text remains visible if CSS variables aren't applied
+            text.setAttribute('style', 'font-size:12px; fill:#ff6b6b; font-weight:800; paint-order:stroke; stroke:white; stroke-width:0.6px;');
+            text.textContent = getTextFromFnode(fingNodes[i]) || '';
             svg.appendChild(text);
           } catch (err) {
             console.warn('Erreur placement doigté', err);
           }
-          noteIndex++;
         }
 
         log('Doigtés affichés (' + fingNodes.length + ') sur ' + containerId + '.');
@@ -661,7 +694,7 @@
         osmdTransposed = await renderScore('osmdTransposed', xmlWithFingerings);
         resultInfo.innerHTML = '<span class="result-badge">✅ Transposition réussie ! Bravo 🎊</span>';
         showerConfetti();
-        log('Transposition effectuée (V16c) — intervalle : ' + interval + ' demi-tons (pour cor en Fa)');
+        log('Transposition effectuée (V16d) — intervalle : ' + interval + ' demi-tons (pour cor en Fa)');
 
         // overlay fingerings on transposed rendering
         await overlayFingeringsOnContainer('osmdTransposed', xmlWithFingerings);
